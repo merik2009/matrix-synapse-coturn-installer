@@ -1,0 +1,34 @@
+# Данные и логи
+data/
+*.log
+install.log
+
+# Конфигурационные файлы с паролями
+configs/install_config.env
+configs/*.env
+
+# SSL сертификаты
+ssl/*
+!ssl/.gitkeep
+
+# Временные файлы
+*.tmp
+*.temp
+.DS_Store
+
+# Резервные копии
+*.backup
+*.bak
+
+# Docker данные
+docker/.env
+
+# IDE файлы
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Системные файлы
+Thumbs.db
+.directory

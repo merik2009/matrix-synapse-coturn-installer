@@ -36,9 +36,17 @@ print_info() {
 # Загрузка конфигурации
 if [ -f "./configs/install_config.env" ]; then
     source ./configs/install_config.env
+    print_info "Конфигурация загружена"
+elif [ -f "../configs/install_config.env" ]; then
+    source ../configs/install_config.env
+    print_info "Конфигурация загружена"
 else
-    print_error "Файл конфигурации не найден!"
-    exit 1
+    print_warning "Файл конфигурации не найден, используются значения по умолчанию"
+    MATRIX_DOMAIN="localhost"
+    SERVER_NAME="localhost" 
+    HTTP_PORT=8008
+    HTTPS_PORT=8448
+    COTURN_PORT=3478
 fi
 
 check_services() {

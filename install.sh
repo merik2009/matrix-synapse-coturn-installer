@@ -49,6 +49,62 @@ check_root() {
     fi
 }
 
+# Проверка зависимостей
+check_dependencies() {
+    print_header "ПРОВЕРКА ЗАВИСИМОСТЕЙ"
+    
+    local missing_deps=()
+    
+    # Проверка основных команд
+    local required_commands=("curl" "wget" "openssl" "bc")
+    
+    for cmd in "${required_commands[@]}"; do
+        if ! command -v "$cmd" &> /dev/null; then
+            missing_deps+=("$cmd")
+        fi
+    done
+    
+    # Проверка доступности интернета
+    if ! curl -s --connect-timeout 5 --max-time 10 google.com > /dev/null; then
+        print_error "Нет подключения к интернету!"
+        exit 1
+    fi
+    
+    # Установка отсутствующих зависимостей
+    if [ ${#missing_deps[@]} -gt 0 ]; then
+        print_info "Установка отсутствующих зависимостей: ${missing_deps[*]}"
+        sudo apt update
+        sudo apt install -y "${missing_deps[@]}"
+    fi
+    
+    print_success "Все зависимости проверены"
+}
+
+# Получение внешнего IP адреса
+get_external_ip() {
+    local ip=""
+    local services=("ifconfig.me" "ipinfo.io/ip" "icanhazip.com" "ident.me")
+    
+    for service in "${services[@]}"; do
+        ip=$(curl -s --connect-timeout 5 --max-time 10 "$service" 2>/dev/null | tr -d '\n\r' | head -c 15)
+        if [[ $ip =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ]]; then
+            echo "$ip"
+            return 0
+        fi
+    done
+    
+    # Если не удалось получить внешний IP, используем локальный
+    ip=$(hostname -I | awk '{print $1}')
+    if [[ -n "$ip" ]]; then
+        print_warning "Не удалось получить внешний IP, используется локальный: $ip"
+        echo "$ip"
+        return 0
+    fi
+    
+    print_error "Не удалось определить IP адрес сервера"
+    return 1
+}
+
 # Проверка операционной системы
 check_os() {
     if [[ "$OSTYPE" == "linux-gnu"* ]]; then
@@ -56,8 +112,37 @@ check_os() {
             . /etc/os-release
             OS=$NAME
             VER=$VERSION_ID
+            
+            # Проверка поддерживаемых дистрибутивов
+            case "$ID" in
+                ubuntu)
+                    if [[ $(echo "$VERSION_ID >= 20.04" | bc -l) -eq 1 ]]; then
+                        print_info "Обнаружена ОС: $OS $VER (поддерживается)"
+                    else
+                        print_error "Требуется Ubuntu 20.04 или новее. Обнаружена: $OS $VER"
+                        exit 1
+                    fi
+                    ;;
+                debian)
+                    if [[ $(echo "$VERSION_ID >= 11" | bc -l) -eq 1 ]]; then
+                        print_info "Обнаружена ОС: $OS $VER (поддерживается)"
+                    else
+                        print_error "Требуется Debian 11 или новее. Обнаружена: $OS $VER"
+                        exit 1
+                    fi
+                    ;;
+                *)
+                    print_warning "Дистрибутив $OS может не поддерживаться. Продолжение на ваш риск."
+                    read -p "Продолжить? (y/N): " CONTINUE
+                    if [[ ! "$CONTINUE" =~ ^[Yy]$ ]]; then
+                        exit 1
+                    fi
+                    ;;
+            esac
+        else
+            print_error "Невозможно определить операционную систему"
+            exit 1
         fi
-        print_info "Обнаружена ОС: $OS $VER"
     else
         print_error "Скрипт поддерживает только Linux системы"
         exit 1
@@ -84,17 +169,25 @@ collect_user_data() {
     
     # Email для SSL сертификатов
     read -p "Введите email для Let's Encrypt сертификатов: " LETSENCRYPT_EMAIL
-    while [[ -z "$LETSENCRYPT_EMAIL" ]]; do
-        print_warning "Email не может быть пустым!"
+    while [[ -z "$LETSENCRYPT_EMAIL" ]] || [[ ! "$LETSENCRYPT_EMAIL" =~ ^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$ ]]; do
+        if [[ -z "$LETSENCRYPT_EMAIL" ]]; then
+            print_warning "Email не может быть пустым!"
+        else
+            print_warning "Введите корректный email адрес!"
+        fi
         read -p "Введите email для Let's Encrypt: " LETSENCRYPT_EMAIL
     done
     
     # Пароль для базы данных
-    read -s -p "Введите пароль для базы данных PostgreSQL: " DB_PASSWORD
+    read -s -p "Введите пароль для базы данных PostgreSQL (минимум 8 символов): " DB_PASSWORD
     echo
-    while [[ -z "$DB_PASSWORD" ]]; do
-        print_warning "Пароль не может быть пустым!"
-        read -s -p "Введите пароль для базы данных: " DB_PASSWORD
+    while [[ -z "$DB_PASSWORD" ]] || [[ ${#DB_PASSWORD} -lt 8 ]]; do
+        if [[ -z "$DB_PASSWORD" ]]; then
+            print_warning "Пароль не может быть пустым!"
+        else
+            print_warning "Пароль должен содержать минимум 8 символов!"
+        fi
+        read -s -p "Введите пароль для базы данных (минимум 8 символов): " DB_PASSWORD
         echo
     done
     
@@ -160,6 +253,13 @@ install_dependencies() {
     
     # Установка базовых пакетов
     print_info "Установка базовых пакетов..."
+    
+    # Проверка доступности пакетов
+    if ! apt-cache search curl | grep -q "^curl "; then
+        print_error "Пакет curl недоступен в репозиториях"
+        exit 1
+    fi
+    
     sudo apt install -y \
         curl \
         wget \
@@ -185,7 +285,8 @@ install_dependencies() {
         libxslt1-dev \
         libjpeg-dev \
         libpq-dev \
-        zlib1g-dev
+        zlib1g-dev \
+        bc
     
     print_success "Базовые зависимости установлены"
 }
@@ -392,6 +493,15 @@ install_coturn() {
     # Установка Coturn
     sudo apt install -y coturn
     
+    # Получение внешнего IP
+    EXTERNAL_IP=$(get_external_ip)
+    if [[ $? -ne 0 ]]; then
+        print_error "Не удалось получить IP адрес для Coturn"
+        exit 1
+    fi
+    
+    print_info "Используется IP адрес: $EXTERNAL_IP"
+    
     # Настройка Coturn
     sudo tee /etc/turnserver.conf > /dev/null << EOF
 use-auth-secret
@@ -402,11 +512,11 @@ max-port=65535
 verbose
 fingerprint
 lt-cred-mech
-external-ip=\$(curl -s ifconfig.me)
+external-ip=$EXTERNAL_IP
 denied-peer-ip=10.0.0.0-10.255.255.255
 denied-peer-ip=192.168.0.0-192.168.255.255
 denied-peer-ip=172.16.0.0-172.31.255.255
-allowed-peer-ip=\$(curl -s ifconfig.me)
+allowed-peer-ip=$EXTERNAL_IP
 user-quota=12
 total-quota=1200
 cert=/etc/letsencrypt/live/$MATRIX_DOMAIN/fullchain.pem
@@ -691,6 +801,7 @@ main() {
     
     # Проверки
     check_root
+    check_dependencies
     check_os
     
     # Сбор данных

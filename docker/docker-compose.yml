@@ -12,7 +12,7 @@ services:
       POSTGRES_INITDB_ARGS: "--encoding=UTF-8 --lc-collate=C --lc-ctype=C"
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ./configs/postgres-init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+      - ../configs/postgres-init.sql:/docker-entrypoint-initdb.d/init.sql:ro
     networks:
       - matrix_network
     healthcheck:
@@ -30,9 +30,9 @@ services:
       SYNAPSE_REPORT_STATS: "no"
     volumes:
       - synapse_data:/data
-      - ./configs/homeserver.yaml:/data/homeserver.yaml:ro
-      - ./configs/log.config:/data/log.config:ro
-      - ./ssl:/data/ssl:ro
+      - ../configs/homeserver.yaml:/data/homeserver.yaml:ro
+      - ../configs/log.config:/data/log.config:ro
+      - ../ssl:/data/ssl:ro
     ports:
       - "${HTTP_PORT}:8008"
     networks:
@@ -56,8 +56,8 @@ services:
       - "5349:5349/tcp"
       - "49152-65535:49152-65535/udp"
     volumes:
-      - ./configs/turnserver.conf:/etc/turnserver.conf:ro
-      - ./ssl:/etc/ssl/certs:ro
+      - ../configs/turnserver.conf:/etc/turnserver.conf:ro
+      - ../ssl:/etc/ssl/certs:ro
     networks:
       - matrix_network
     command: ["-c", "/etc/turnserver.conf"]
@@ -71,10 +71,10 @@ services:
       - "443:443"
       - "${HTTPS_PORT}:8448"
     volumes:
-      - ./configs/nginx.conf:/etc/nginx/nginx.conf:ro
-      - ./configs/nginx-sites:/etc/nginx/conf.d:ro
-      - ./ssl:/etc/ssl/certs:ro
-      - ./data/nginx-logs:/var/log/nginx
+      - ../configs/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ../configs/nginx-sites:/etc/nginx/conf.d:ro
+      - ../ssl:/etc/ssl/certs:ro
+      - ../data/nginx-logs:/var/log/nginx
     networks:
       - matrix_network
     depends_on:
@@ -90,7 +90,7 @@ services:
     image: vectorim/element-web:latest
     restart: unless-stopped
     volumes:
-      - ./configs/element-config.json:/app/config.json:ro
+      - ../configs/element-config.json:/app/config.json:ro
     networks:
       - matrix_network
     ports:

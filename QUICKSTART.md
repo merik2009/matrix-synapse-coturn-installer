@@ -116,6 +116,16 @@ sudo systemctl status matrix-synapse coturn nginx
 sudo systemctl restart matrix-synapse
 ```
 
+### Ошибки прав доступа или pkg_resources
+```bash
+# Автоматическое исправление
+./scripts/fix-synapse.sh
+
+# Или вручную:
+sudo chown -R synapse:synapse /etc/synapse /var/lib/synapse /var/log/synapse
+sudo systemctl restart matrix-synapse
+```
+
 ### Проблемы с SSL
 ```bash
 # Обновление сертификатов

@@ -278,6 +278,7 @@ install_dependencies() {
         python3 \
         python3-pip \
         python3-venv \
+        python3-nacl \
         build-essential \
         libffi-dev \
         libssl-dev \
@@ -351,12 +352,13 @@ install_synapse() {
     sudo -u synapse /var/lib/synapse/venv/bin/pip install --upgrade pip
     sudo -u synapse /var/lib/synapse/venv/bin/pip install matrix-synapse[postgres]
     
-    # Создание директорий
+    # Создание директорий с правильными правами
     sudo mkdir -p /etc/synapse
     sudo mkdir -p /var/log/synapse
     sudo mkdir -p /var/lib/synapse/media
     sudo chown -R synapse:synapse /var/lib/synapse
     sudo chown -R synapse:synapse /var/log/synapse
+    sudo chown -R synapse:synapse /etc/synapse
     
     print_success "Matrix Synapse установлен"
 }
@@ -365,14 +367,34 @@ install_synapse() {
 generate_synapse_config() {
     print_header "ГЕНЕРАЦИЯ КОНФИГУРАЦИИ SYNAPSE"
     
-    # Генерация конфигурации
+    # Сначала генерируем базовую конфигурацию во временном файле
+    print_info "Генерация базовой конфигурации..."
     sudo -u synapse /var/lib/synapse/venv/bin/python -m synapse.app.homeserver \
         --server-name $SERVER_NAME \
-        --config-path /etc/synapse/homeserver.yaml \
+        --config-path /tmp/homeserver_temp.yaml \
         --generate-config \
         --report-stats=no
     
+    # Извлекаем ключ подписи из временного файла
+    SIGNING_KEY=$(sudo grep -A 5 "signing_key:" /tmp/homeserver_temp.yaml | tail -1 | sed 's/^signing_key: "//' | sed 's/"$//' || echo "")
+    
+    # Если не удалось извлечь ключ, генерируем новый
+    if [[ -z "$SIGNING_KEY" ]]; then
+        print_info "Генерация нового ключа подписи..."
+        sudo -u synapse /var/lib/synapse/venv/bin/python -c "
+from synapse.crypto.signing_key import generate_signing_key
+key = generate_signing_key(0)
+print(key.encode().decode('ascii'))
+" > /tmp/signing_key.tmp
+        SIGNING_KEY=$(cat /tmp/signing_key.tmp)
+        sudo rm -f /tmp/signing_key.tmp
+    fi
+    
+    # Очистка временного файла
+    sudo rm -f /tmp/homeserver_temp.yaml
+    
     # Создание конфигурационного файла
+    print_info "Создание финальной конфигурации..."
     sudo tee /etc/synapse/homeserver.yaml > /dev/null << EOF
 server_name: "$SERVER_NAME"
 pid_file: /var/lib/synapse/homeserver.pid
@@ -449,6 +471,44 @@ turn_user_lifetime: 86400000
 
 suppress_key_server_warning: true
 EOF
+
+    # Генерация и сохранение ключа подписи
+    print_info "Генерация ключа подписи..."
+    
+    # Попробуем использовать встроенную утилиту Synapse
+    if sudo -u synapse /var/lib/synapse/venv/bin/python -c "
+from synapse.util.config_helper import generate_config_from_template
+from synapse.config.key import KeyConfig
+import tempfile
+import os
+
+# Создаем временную директорию для ключа
+with tempfile.TemporaryDirectory() as temp_dir:
+    key_path = os.path.join(temp_dir, 'signing.key')
+    
+    # Генерируем ключ
+    key_config = KeyConfig()
+    key_config.generate_files({'signing_key_path': key_path}, {})
+    
+    # Читаем сгенерированный ключ
+    with open(key_path, 'r') as f:
+        key_content = f.read().strip()
+    
+    print(key_content)
+" 2>/dev/null > /tmp/signing_key_temp.txt; then
+        sudo mv /tmp/signing_key_temp.txt /etc/synapse/homeserver.signing.key
+        print_success "Ключ подписи сгенерирован с помощью Synapse"
+    else
+        # Альтернативный способ с помощью OpenSSL
+        print_info "Использование альтернативного метода генерации ключа..."
+        RANDOM_KEY=$(openssl rand -base64 32)
+        echo "ed25519 a_${RANDOM_KEY}" | sudo tee /etc/synapse/homeserver.signing.key > /dev/null
+        print_warning "Использован упрощенный ключ. Рекомендуется перегенерировать после установки."
+    fi
+    
+    # Установка правильных прав доступа
+    sudo chmod 600 /etc/synapse/homeserver.signing.key
+    sudo chown synapse:synapse /etc/synapse/homeserver.signing.key
 
     # Создание конфигурации логирования
     sudo tee /etc/synapse/log.config > /dev/null << EOF

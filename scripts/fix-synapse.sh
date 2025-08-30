@@ -178,6 +178,68 @@ start_services() {
     fi
 }
 
+# Переустановка Synapse
+reinstall_synapse() {
+    print_header "ПЕРЕУСТАНОВКА MATRIX SYNAPSE"
+    
+    # Остановка сервиса
+    if sudo systemctl is-active --quiet matrix-synapse; then
+        print_info "Остановка Matrix Synapse..."
+        sudo systemctl stop matrix-synapse
+    fi
+    
+    print_info "Создание пользователя synapse..."
+    if ! id "synapse" &>/dev/null; then
+        sudo useradd -r -s /bin/false synapse
+    fi
+    
+    # Создание директорий
+    print_info "Создание директорий..."
+    sudo mkdir -p /var/lib/synapse
+    sudo mkdir -p /etc/synapse
+    sudo mkdir -p /var/log/synapse
+    
+    # Удаление старого виртуального окружения
+    if [[ -d "/var/lib/synapse/venv" ]]; then
+        print_info "Удаление старого виртуального окружения..."
+        sudo rm -rf /var/lib/synapse/venv
+    fi
+    
+    # Создание нового виртуального окружения
+    print_info "Создание виртуального окружения..."
+    sudo python3 -m venv /var/lib/synapse/venv
+    
+    # Обновление pip и установка зависимостей
+    print_info "Установка зависимостей..."
+    sudo /var/lib/synapse/venv/bin/pip install --upgrade pip setuptools wheel
+    sudo /var/lib/synapse/venv/bin/pip install "matrix-synapse[all]"
+    sudo /var/lib/synapse/venv/bin/pip install psycopg2-binary
+    
+    # Исправление прав доступа
+    print_info "Исправление прав доступа..."
+    sudo chown -R synapse:synapse /var/lib/synapse
+    sudo chown -R synapse:synapse /etc/synapse
+    sudo chown -R synapse:synapse /var/log/synapse
+    
+    # Проверка установки
+    print_info "Проверка установки..."
+    if sudo -u synapse /var/lib/synapse/venv/bin/python -c "
+try:
+    from synapse.crypto.signing_key import generate_signing_key
+    print('✅ Модуль synapse.crypto.signing_key найден!')
+except ImportError as e:
+    print(f'❌ Ошибка импорта: {e}')
+    exit(1)
+"; then
+        print_success "Matrix Synapse успешно переустановлен"
+    else
+        print_error "Ошибка при переустановке Matrix Synapse"
+        return 1
+    fi
+    
+    print_info "Для завершения настройки запустите основной скрипт установки"
+}
+
 # Показать статус
 show_status() {
     print_header "СТАТУС СЕРВИСОВ"
@@ -216,13 +278,17 @@ main() {
         "status")
             show_status
             ;;
+        "reinstall")
+            reinstall_synapse
+            ;;
         *)
-            echo "Использование: $0 [fix|permissions|key|check|status]"
+            echo "Использование: $0 [fix|permissions|key|check|status|reinstall]"
             echo "  fix         - исправить все проблемы (по умолчанию)"
             echo "  permissions - исправить права доступа"
             echo "  key         - создать ключ подписи"
             echo "  check       - проверить конфигурацию"
             echo "  status      - показать статус сервисов"
+            echo "  reinstall   - переустановить Matrix Synapse"
             ;;
     esac
 }

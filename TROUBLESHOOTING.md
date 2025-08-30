@@ -1,5 +1,76 @@
 # 🔧 Решение проблем с Matrix Synapse
 
+## 🚨 Проблема: ModuleNotFoundError - модуль synapse.crypto.signing_key не найден
+
+### Описание ошибки:
+```
+ModuleNotFoundError: No module named 'synapse.crypto.signing_key'
+```
+
+### Причина:
+Matrix Synapse не установлен или установлен неправильно в виртуальном окружении.
+
+### ✅ Решение на сервере:
+
+#### 1. **Проверка установки Synapse**
+```bash
+# Проверить виртуальное окружение
+ls -la /var/lib/synapse/venv/
+
+# Проверить установленные пакеты
+sudo -u synapse /var/lib/synapse/venv/bin/pip list | grep matrix-synapse
+```
+
+#### 2. **Переустановка Synapse (если не установлен)**
+```bash
+# Остановить сервис
+sudo systemctl stop matrix-synapse
+
+# Создать/обновить виртуальное окружение
+sudo mkdir -p /var/lib/synapse
+sudo python3 -m venv /var/lib/synapse/venv
+
+# Установить Synapse
+sudo /var/lib/synapse/venv/bin/pip install --upgrade pip setuptools wheel
+sudo /var/lib/synapse/venv/bin/pip install "matrix-synapse[all]"
+
+# Установить дополнительные зависимости
+sudo /var/lib/synapse/venv/bin/pip install psycopg2-binary
+
+# Исправить права доступа
+sudo chown -R synapse:synapse /var/lib/synapse
+```
+
+#### 3. **Проверка работоспособности**
+```bash
+# Тест импорта модуля
+sudo -u synapse /var/lib/synapse/venv/bin/python -c "
+try:
+    from synapse.crypto.signing_key import generate_signing_key
+    print('✅ Модуль synapse.crypto.signing_key найден!')
+except ImportError as e:
+    print(f'❌ Ошибка импорта: {e}')
+"
+
+# Генерация тестового ключа
+sudo -u synapse /var/lib/synapse/venv/bin/python -c "
+from synapse.crypto.signing_key import generate_signing_key
+import tempfile
+import os
+
+with tempfile.NamedTemporaryFile(delete=False) as f:
+    generate_signing_key(f.name)
+    print(f'✅ Ключ успешно сгенерирован в {f.name}')
+    os.unlink(f.name)
+"
+```
+
+#### 4. **Автоматическое решение**
+```bash
+# Запустить скрипт исправления
+./scripts/fix-synapse.sh reinstall
+```
+
 ## 🚨 Проблема: Permission denied при генерации конфигурации
 
 ### Описание ошибки:

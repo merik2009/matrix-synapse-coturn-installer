@@ -11,6 +11,27 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m'
 
+# Функция для выполнения команд с правами суперпользователя
+run_as_root() {
+    if [[ $EUID -eq 0 ]]; then
+        "$@"
+    else
+        run_as_root "$@"
+    fi
+}
+
+# Функция для выполнения команд от имени определенного пользователя
+run_as_user() {
+    local user="$1"
+    shift
+    
+    if [[ $EUID -eq 0 ]]; then
+        su - "$user" -c "$*"
+    else
+        run_as_root -u "$user" "$@"
+    fi
+}
+
 print_header() {
     echo -e "\n${BLUE}============================================${NC}"
     echo -e "${BLUE}$1${NC}"
@@ -40,16 +61,16 @@ fix_pkg_resources() {
     print_info "Обновление setuptools в виртуальном окружении Synapse..."
     
     # Остановка Synapse
-    if sudo systemctl is-active --quiet matrix-synapse; then
+    if run_as_root systemctl is-active --quiet matrix-synapse; then
         print_info "Остановка Matrix Synapse..."
-        sudo systemctl stop matrix-synapse
+        run_as_root systemctl stop matrix-synapse
     fi
     
     # Обновление setuptools
-    sudo -u synapse /var/lib/synapse/venv/bin/pip install --upgrade "setuptools<81"
+    run_as_user synapse /var/lib/synapse/venv/bin/pip install --upgrade "setuptools<81"
     
     # Также обновим pip и wheel
-    sudo -u synapse /var/lib/synapse/venv/bin/pip install --upgrade pip wheel
+    run_as_user synapse /var/lib/synapse/venv/bin/pip install --upgrade pip wheel
     
     print_success "Setuptools обновлен"
 }
@@ -61,29 +82,29 @@ fix_permissions() {
     # Проверка и исправление прав на конфигурационные файлы
     if [[ -d "/etc/synapse" ]]; then
         print_info "Исправление прав на /etc/synapse..."
-        sudo chown -R synapse:synapse /etc/synapse
-        sudo chmod 755 /etc/synapse
+        run_as_root chown -R synapse:synapse /etc/synapse
+        run_as_root chmod 755 /etc/synapse
         
         if [[ -f "/etc/synapse/homeserver.yaml" ]]; then
-            sudo chmod 644 /etc/synapse/homeserver.yaml
+            run_as_root chmod 644 /etc/synapse/homeserver.yaml
         fi
         
         if [[ -f "/etc/synapse/homeserver.signing.key" ]]; then
-            sudo chmod 600 /etc/synapse/homeserver.signing.key
-            sudo chown synapse:synapse /etc/synapse/homeserver.signing.key
+            run_as_root chmod 600 /etc/synapse/homeserver.signing.key
+            run_as_root chown synapse:synapse /etc/synapse/homeserver.signing.key
         fi
     fi
     
     # Исправление прав на директории данных
     if [[ -d "/var/lib/synapse" ]]; then
         print_info "Исправление прав на /var/lib/synapse..."
-        sudo chown -R synapse:synapse /var/lib/synapse
+        run_as_root chown -R synapse:synapse /var/lib/synapse
     fi
     
     # Исправление прав на логи
     if [[ -d "/var/log/synapse" ]]; then
         print_info "Исправление прав на /var/log/synapse..."
-        sudo chown -R synapse:synapse /var/log/synapse
+        run_as_root chown -R synapse:synapse /var/log/synapse
     fi
     
     print_success "Права доступа исправлены"
@@ -97,7 +118,7 @@ generate_signing_key() {
         print_info "Генерация отсутствующего ключа подписи..."
         
         # Создание ключа с помощью Synapse
-        sudo -u synapse /var/lib/synapse/venv/bin/python -c "
+        run_as_user synapse /var/lib/synapse/venv/bin/python -c "
 from synapse.config.key import KeyConfig
 import tempfile
 import os
@@ -125,8 +146,8 @@ finally:
 "
         
         # Установка правильных прав
-        sudo chown synapse:synapse /etc/synapse/homeserver.signing.key
-        sudo chmod 600 /etc/synapse/homeserver.signing.key
+        run_as_root chown synapse:synapse /etc/synapse/homeserver.signing.key
+        run_as_root chmod 600 /etc/synapse/homeserver.signing.key
         
         print_success "Ключ подписи создан"
     else
@@ -141,7 +162,7 @@ check_config() {
     if [[ -f "/etc/synapse/homeserver.yaml" ]]; then
         print_info "Проверка синтаксиса конфигурации..."
         
-        if sudo -u synapse /var/lib/synapse/venv/bin/python -m synapse.config.homeserver -c /etc/synapse/homeserver.yaml --generate-keys; then
+        if run_as_user synapse /var/lib/synapse/venv/bin/python -m synapse.config.homeserver -c /etc/synapse/homeserver.yaml --generate-keys; then
             print_success "Конфигурация корректна"
         else
             print_error "Ошибка в конфигурации Synapse"
@@ -158,22 +179,22 @@ start_services() {
     print_header "ЗАПУСК СЕРВИСОВ"
     
     # Запуск PostgreSQL
-    if ! sudo systemctl is-active --quiet postgresql; then
+    if ! run_as_root systemctl is-active --quiet postgresql; then
         print_info "Запуск PostgreSQL..."
-        sudo systemctl start postgresql
+        run_as_root systemctl start postgresql
     fi
     
     # Запуск Matrix Synapse
     print_info "Запуск Matrix Synapse..."
-    sudo systemctl start matrix-synapse
+    run_as_root systemctl start matrix-synapse
     
     # Проверка статуса
     sleep 5
-    if sudo systemctl is-active --quiet matrix-synapse; then
+    if run_as_root systemctl is-active --quiet matrix-synapse; then
         print_success "Matrix Synapse успешно запущен"
     else
         print_error "Ошибка запуска Matrix Synapse"
-        print_info "Проверьте логи: sudo journalctl -u matrix-synapse -f"
+        print_info "Проверьте логи: run_as_root journalctl -u matrix-synapse -f"
         return 1
     fi
 }
@@ -183,47 +204,47 @@ reinstall_synapse() {
     print_header "ПЕРЕУСТАНОВКА MATRIX SYNAPSE"
     
     # Остановка сервиса
-    if sudo systemctl is-active --quiet matrix-synapse; then
+    if run_as_root systemctl is-active --quiet matrix-synapse; then
         print_info "Остановка Matrix Synapse..."
-        sudo systemctl stop matrix-synapse
+        run_as_root systemctl stop matrix-synapse
     fi
     
     print_info "Создание пользователя synapse..."
     if ! id "synapse" &>/dev/null; then
-        sudo useradd -r -s /bin/false synapse
+        run_as_root useradd -r -s /bin/false synapse
     fi
     
     # Создание директорий
     print_info "Создание директорий..."
-    sudo mkdir -p /var/lib/synapse
-    sudo mkdir -p /etc/synapse
-    sudo mkdir -p /var/log/synapse
+    run_as_root mkdir -p /var/lib/synapse
+    run_as_root mkdir -p /etc/synapse
+    run_as_root mkdir -p /var/log/synapse
     
     # Удаление старого виртуального окружения
     if [[ -d "/var/lib/synapse/venv" ]]; then
         print_info "Удаление старого виртуального окружения..."
-        sudo rm -rf /var/lib/synapse/venv
+        run_as_root rm -rf /var/lib/synapse/venv
     fi
     
     # Создание нового виртуального окружения
     print_info "Создание виртуального окружения..."
-    sudo python3 -m venv /var/lib/synapse/venv
+    run_as_root python3 -m venv /var/lib/synapse/venv
     
     # Обновление pip и установка зависимостей
     print_info "Установка зависимостей..."
-    sudo /var/lib/synapse/venv/bin/pip install --upgrade pip setuptools wheel
-    sudo /var/lib/synapse/venv/bin/pip install "matrix-synapse[all]"
-    sudo /var/lib/synapse/venv/bin/pip install psycopg2-binary
+    run_as_root /var/lib/synapse/venv/bin/pip install --upgrade pip setuptools wheel
+    run_as_root /var/lib/synapse/venv/bin/pip install "matrix-synapse[all]"
+    run_as_root /var/lib/synapse/venv/bin/pip install psycopg2-binary
     
     # Исправление прав доступа
     print_info "Исправление прав доступа..."
-    sudo chown -R synapse:synapse /var/lib/synapse
-    sudo chown -R synapse:synapse /etc/synapse
-    sudo chown -R synapse:synapse /var/log/synapse
+    run_as_root chown -R synapse:synapse /var/lib/synapse
+    run_as_root chown -R synapse:synapse /etc/synapse
+    run_as_root chown -R synapse:synapse /var/log/synapse
     
     # Проверка установки
     print_info "Проверка установки..."
-    if sudo -u synapse /var/lib/synapse/venv/bin/python -c "
+    if run_as_user synapse /var/lib/synapse/venv/bin/python -c "
 try:
     from synapse.crypto.signing_key import generate_signing_key
     print('✅ Модуль synapse.crypto.signing_key найден!')
@@ -247,7 +268,7 @@ show_status() {
     services=("postgresql" "matrix-synapse" "coturn" "nginx")
     
     for service in "${services[@]}"; do
-        if sudo systemctl is-active --quiet $service 2>/dev/null; then
+        if run_as_root systemctl is-active --quiet $service 2>/dev/null; then
             print_success "$service: запущен"
         else
             print_error "$service: остановлен"

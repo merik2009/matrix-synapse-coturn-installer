@@ -44,8 +44,59 @@ print_info() {
 # Проверка прав суперпользователя
 check_root() {
     if [[ $EUID -eq 0 ]]; then
-        print_error "Не запускайте скрипт от имени root! Используйте sudo при необходимости."
-        exit 1
+        print_warning "Скрипт запущен от имени root."
+        print_info "Команды sudo будут выполняться напрямую."
+        SUDO_CMD=""
+        IS_ROOT=true
+    else
+        print_info "Скрипт запущен от обычного пользователя."
+        print_info "Будет использоваться sudo для привилегированных команд."
+        SUDO_CMD="sudo"
+        IS_ROOT=false
+        
+        # Проверка доступности sudo
+        if ! command -v sudo &> /dev/null; then
+            print_error "sudo не найден! Установите sudo или запустите скрипт от root."
+            exit 1
+        fi
+        
+        # Проверка прав sudo
+        if ! sudo -n true 2>/dev/null; then
+            print_warning "Требуется ввод пароля для sudo"
+            sudo -v
+        fi
+    fi
+}
+
+# Функция для выполнения команд с правами суперпользователя
+run_as_root() {
+    if [[ $IS_ROOT == true ]]; then
+        "$@"
+    else
+        sudo "$@"
+    fi
+}
+
+# Функция для выполнения команд от имени определенного пользователя
+run_as_user() {
+    local user="$1"
+    shift
+    
+    if [[ $IS_ROOT == true ]]; then
+        su - "$user" -c "$*"
+    else
+        sudo -u "$user" "$@"
+    fi
+}
+
+# Функция для выполнения команд с правами суперпользователя
+run_as_root() {
+    if [[ $EUID -eq 0 ]]; then
+        # Уже root, выполняем напрямую
+        "$@"
+    else
+        # Не root, используем sudo
+        sudo "$@"
     fi
 }
 
@@ -73,8 +124,8 @@ check_dependencies() {
     # Установка отсутствующих зависимостей
     if [ ${#missing_deps[@]} -gt 0 ]; then
         print_info "Установка отсутствующих зависимостей: ${missing_deps[*]}"
-        sudo apt update
-        sudo apt install -y "${missing_deps[@]}"
+        run_as_root apt update
+        run_as_root apt install -y "${missing_deps[@]}"
     fi
     
     print_success "Все зависимости проверены"
@@ -249,7 +300,7 @@ install_dependencies() {
     
     # Обновление системы
     print_info "Обновление списка пакетов..."
-    sudo apt update
+    run_as_root apt update
     
     # Установка базовых пакетов
     print_info "Установка базовых пакетов..."
@@ -260,7 +311,7 @@ install_dependencies() {
         exit 1
     fi
     
-    sudo apt install -y \
+    run_as_root apt install -y \
         curl \
         wget \
         gnupg2 \
@@ -302,15 +353,17 @@ install_docker() {
     fi
     
     # Добавление репозитория Docker
-    curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg
-    echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+    curl -fsSL https://download.docker.com/linux/ubuntu/gpg | run_as_root gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg
+    echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | run_as_root tee /etc/apt/sources.list.d/docker.list > /dev/null
     
     # Установка Docker
-    sudo apt update
-    sudo apt install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
+    run_as_root apt update
+    run_as_root apt install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
     
-    # Добавление пользователя в группу docker
-    sudo usermod -aG docker $USER
+    # Добавление пользователя в группу docker (только если не root)
+    if [[ $EUID -ne 0 ]]; then
+        run_as_root usermod -aG docker $USER
+    fi
     
     print_success "Docker установлен"
 }
